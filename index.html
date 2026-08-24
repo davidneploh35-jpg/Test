@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Витрина VESNA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&family=Golos+Text:wght@400;500&display=swap">
+<link rel="stylesheet" href="assets/parallax.css">
+<style>
+:root{
+  --ground:#E4E7E1;
+  --raised:#F1F3EE;
+  --ink:#151A15;
+  --muted:#5E6A5D;
+  --line:rgba(21,26,21,.16);
+  --accent:#2E5647;
+  --display:"Playfair Display", Georgia, "Times New Roman", serif;
+  --sans:"Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0C100D;
+    --raised:#141A15;
+    --ink:#E7EAE3;
+    --muted:#8E988B;
+    --line:rgba(231,234,227,.17);
+    --accent:#84B49D;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0C100D;
+  --raised:#141A15;
+  --ink:#E7EAE3;
+  --muted:#8E988B;
+  --line:rgba(231,234,227,.17);
+  --accent:#84B49D;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit}
+img,video{max-width:100%}
+
+/* --- шапка ---------------------------------------------------- */
+.bar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; justify-content:space-between;
+  gap:1rem;
+  padding:0.95rem clamp(1rem,5vw,2.5rem);
+  background:color-mix(in srgb, var(--ground) 86%, transparent);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.wordmark{
+  font-family:var(--display);
+  font-size:clamp(1rem,3.4vw,1.25rem);
+  letter-spacing:.42em;
+  text-indent:.42em;
+  text-transform:uppercase;
+  text-decoration:none;
+}
+.bar nav{display:flex; align-items:center; gap:clamp(.9rem,4vw,1.6rem)}
+.bar nav button{
+  background:none; border:0; padding:.35rem; cursor:pointer;
+  color:inherit; line-height:0; border-radius:6px;
+}
+.bar nav button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.bar svg{width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.4}
+
+/* --- секции --------------------------------------------------- */
+.px-panel + .px-panel{border-top:7px solid var(--ground)}
+
+.eyebrow{
+  margin:0 0 1.1rem;
+  font-size:.7rem; font-weight:500;
+  letter-spacing:.24em; text-transform:uppercase;
+  color:rgba(242,243,239,.82);
+}
+.px-panel__copy h1,
+.px-panel__copy h2{
+  margin:0 0 .7rem;
+  font-family:var(--display);
+  font-weight:400;
+  font-size:clamp(2.7rem,10.5vw,5.4rem);
+  line-height:.96;
+  letter-spacing:-.015em;
+  text-wrap:balance;
+}
+.lede{
+  margin:0 0 2rem;
+  max-width:30ch;
+  font-size:clamp(.95rem,3.6vw,1.06rem);
+  color:rgba(242,243,239,.86);
+}
+.links{display:flex; flex-wrap:wrap; gap:clamp(1.2rem,6vw,2.4rem)}
+.cta{
+  position:relative;
+  font-size:.72rem; font-weight:500;
+  letter-spacing:.2em; text-transform:uppercase;
+  text-decoration:none; padding-bottom:.45rem;
+}
+.cta::after{
+  content:""; position:absolute; left:0; bottom:0;
+  width:100%; height:1px; background:currentColor;
+  transform-origin:left; transition:transform .5s cubic-bezier(.22,1,.36,1);
+}
+.cta:hover::after{transform:scaleX(.42)}
+.cta:focus-visible{outline:2px solid #f2f3ef; outline-offset:5px; border-radius:2px}
+
+/* Здесь вместо градиентов ставится ваше фото:
+   .m-hero{ --px-media: url("/img/hero.jpg") }
+   либо в .px-panel__media кладётся <video autoplay muted loop playsinline>. */
+.m-hero{
+  --px-media:
+    radial-gradient(78% 42% at 46% -4%, rgba(233,238,219,.72) 0%, transparent 64%),
+    radial-gradient(58% 34% at 84% 12%, rgba(214,222,196,.34) 0%, transparent 70%),
+    radial-gradient(120% 76% at 18% 40%, #6f7d62 0%, transparent 62%),
+    radial-gradient(130% 96% at 50% 108%, rgba(8,11,7,.94) 0%, transparent 60%),
+    linear-gradient(174deg, #aab296 0%, #55603f 40%, #222a1c 74%, #0d110b 100%);
+}
+.m-room{
+  --px-media:
+    radial-gradient(46% 30% at 70% 14%, rgba(247,226,183,.6) 0%, transparent 68%),
+    radial-gradient(96% 62% at 62% 26%, #9c8058 0%, transparent 64%),
+    radial-gradient(120% 92% at 8% 96%, rgba(18,14,10,.92) 0%, transparent 58%),
+    linear-gradient(166deg, #7a6446 0%, #43372a 46%, #1d1811 78%, #100d09 100%);
+}
+.m-coast{
+  --px-media:
+    radial-gradient(88% 46% at 34% 6%, rgba(226,232,230,.78) 0%, transparent 66%),
+    radial-gradient(64% 40% at 76% 34%, rgba(150,170,172,.5) 0%, transparent 68%),
+    radial-gradient(130% 96% at 52% 106%, rgba(8,13,14,.92) 0%, transparent 62%),
+    linear-gradient(182deg, #a9b8b7 0%, #5f7274 44%, #263234 76%, #101718 100%);
+}
+
+/* --- финальный блок ------------------------------------------- */
+.notes{
+  padding:clamp(3.5rem,12vw,7rem) clamp(1.25rem,5vw,2.5rem);
+  border-top:7px solid var(--ground);
+  background:var(--raised);
+}
+.notes h2{
+  margin:0 0 2.6rem;
+  font-family:var(--display); font-weight:400;
+  font-size:clamp(1.7rem,5.5vw,2.5rem);
+  line-height:1.1;
+}
+.notes ul{
+  list-style:none; margin:0; padding:0;
+  display:grid; gap:1.75rem;
+  grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+  max-width:64rem;
+}
+.notes li{border-top:1px solid var(--line); padding-top:1rem}
+.notes h3{
+  margin:0 0 .4rem;
+  font-size:.72rem; font-weight:500;
+  letter-spacing:.2em; text-transform:uppercase;
+  color:var(--accent);
+}
+.notes p{margin:0; color:var(--muted); font-size:.95rem}
+.notes code{
+  font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size:.85em; color:var(--ink);
+}
+.foot{
+  padding:1.6rem clamp(1.25rem,5vw,2.5rem) 2.6rem;
+  background:var(--raised);
+  color:var(--muted);
+  font-size:.75rem; letter-spacing:.06em;
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <a class="wordmark" href="#">Vesna</a>
+  <nav aria-label="Основное">
+    <button type="button" aria-label="Поиск"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
+    <button type="button" aria-label="Корзина"><svg viewBox="0 0 24 24"><path d="M5.5 8h13l-1 12h-11z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></svg></button>
+    <button type="button" aria-label="Меню"><svg viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"/></svg></button>
+  </nav>
+</header>
+
+<main>
+  <!-- data-depth = насколько фон отстаёт от скролла: 0.10 спокойно, 0.22 заметно -->
+  <section class="px-panel" data-depth="0.18">
+    <div class="px-panel__media">
+      <!-- На боевом сайте здесь: <video autoplay muted loop playsinline poster="…"><source src="hero.mp4"></video> -->
+      <div class="px-panel__still px-ambient m-hero"></div>
+    </div>
+    <div class="px-panel__scrim"></div>
+    <div class="px-panel__copy">
+      <p class="eyebrow" data-reveal>Коллекция · Осень 26</p>
+      <h1 data-reveal>Северный лён</h1>
+      <p class="lede" data-reveal>Плотные фактуры, приглушённый цвет и силуэты, которые держат форму до весны.</p>
+      <div class="links">
+        <a class="cta" href="#" data-reveal>Женское</a>
+        <a class="cta" href="#" data-reveal>Мужское</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="px-panel" data-depth="0.14">
+    <div class="px-panel__media"><div class="px-panel__still m-room"></div></div>
+    <div class="px-panel__scrim"></div>
+    <div class="px-panel__copy">
+      <p class="eyebrow" data-reveal>Капсула</p>
+      <h2 data-reveal>Городская тишина</h2>
+      <p class="lede" data-reveal>Шерсть, твид и мягкое плечо — гардероб для будней, который не выглядит как форма.</p>
+      <div class="links"><a class="cta" href="#" data-reveal>Смотреть капсулу</a></div>
+    </div>
+  </section>
+
+  <section class="px-panel" data-depth="0.2">
+    <div class="px-panel__media"><div class="px-panel__still m-coast"></div></div>
+    <div class="px-panel__scrim"></div>
+    <div class="px-panel__copy">
+      <p class="eyebrow" data-reveal>Новое</p>
+      <h2 data-reveal>Побережье</h2>
+      <p class="lede" data-reveal>Сумки из растительного дубления: форма седла, ремень на всю длину корпуса.</p>
+      <div class="links"><a class="cta" href="#" data-reveal>В каталог</a></div>
+    </div>
+  </section>
+
+  <section class="notes">
+    <h2>Как это собрано</h2>
+    <ul>
+      <li>
+        <h3>Параллакс</h3>
+        <p>Фон внутри секции сдвигается медленнее страницы, текст — быстрее. Считается в <code>requestAnimationFrame</code>, поэтому работает и в Safari на iPhone, где <code>background-attachment: fixed</code> ломается.</p>
+      </li>
+      <li>
+        <h3>Появление текста</h3>
+        <p><code>IntersectionObserver</code> вешает класс на секцию, дальше всё делает CSS-переход со ступенчатой задержкой по строкам.</p>
+      </li>
+      <li>
+        <h3>Свои фото и видео</h3>
+        <p>В демо фоны нарисованы градиентами. На боевом сайте: <code>--px-media: url(/img/hero.jpg)</code> либо <code>&lt;video autoplay muted loop playsinline&gt;</code> внутрь <code>.px-panel__media</code>.</p>
+      </li>
+      <li>
+        <h3>Встраивание</h3>
+        <p>Два файла — <code>assets/parallax.css</code> и <code>assets/parallax.js</code>. Все классы с префиксом <code>px-</code>, в чужую вёрстку не лезут.</p>
+      </li>
+    </ul>
+  </section>
+</main>
+
+<footer class="foot">VESNA — вымышленная марка, страница собрана как демонстрация приёма. Движение отключается при системной настройке «Уменьшение движения».</footer>
+
+<script src="assets/parallax.js"></script>
+</body>
+</html>
