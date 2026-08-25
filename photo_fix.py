@@ -257,7 +257,10 @@ def download_all(page_map, out_dir, min_side, overrides, delay=0.2):
     os.makedirs(out_dir, exist_ok=True)
     rows, by_md5, tried_full = [], {}, set()
 
+    total = len(page_map)
     for i, url in enumerate(sorted(page_map), 1):
+        if i % 25 == 0 or i == total:
+            log(f"   {i}/{total} ({i * 100 // total}%)")
         rule, category = rule_for(list(page_map[url]) + [url], overrides)
         if rule == "SKIP":
             rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
@@ -310,8 +313,17 @@ def download_all(page_map, out_dir, min_side, overrides, delay=0.2):
             continue
 
         fname = safe_name(best_url, i)
-        with open(os.path.join(out_dir, fname), "wb") as f:
-            f.write(best_data)
+        try:
+            with open(os.path.join(out_dir, fname), "wb") as f:
+                f.write(best_data)
+        except OSError as e:
+            note = ("на диске кончилось место" if getattr(e, "errno", None) == 28
+                    else str(e)[:120])
+            rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
+                         "category": category, "rule": rule, "w": w, "h": h,
+                         "status": "write_error", "note": note})
+            log(f"   ! не записался {fname}: {note}")
+            continue
         by_md5[digest] = fname
 
         rows.append({"url": best_url, "page": sorted(page_map[url])[0], "file": fname,
@@ -705,9 +717,14 @@ def process_rows(rows, raw_dir, out_dir, args):
     os.makedirs(out_dir, exist_ok=True)
 
     done = manual = skipped = 0
+    todo = sum(1 for r in rows if r["status"] == "downloaded")
+    seen = 0
     for row in rows:
         if row["status"] != "downloaded":
             continue
+        seen += 1
+        if seen % 25 == 0 or seen == todo:
+            log(f"   {seen}/{todo} ({seen * 100 // max(todo, 1)}%)")
         src = os.path.join(raw_dir, row["file"])
         dst = os.path.join(out_dir, out_name(row))
 
@@ -743,6 +760,12 @@ def process_rows(rows, raw_dir, out_dir, args):
         try:
             out, pad_share, upscaled = render(im, (left, top, right, bottom), args.quality)
             out.save(dst, "JPEG", quality=args.quality, subsampling=0, optimize=True)
+        except OSError as e:
+            row["status"] = "render_error"
+            row["note"] = ("на диске кончилось место" if getattr(e, "errno", None) == 28
+                           else str(e)[:120])
+            log(f'   ! не сохранился {row["file"]}: {row["note"]}')
+            continue
         except Exception as e:
             row["status"] = "render_error"
             row["note"] = str(e)[:120]
@@ -816,6 +839,7 @@ def summarize(rows):
         "not_an_image": "Не изображения",
         "open_error": "Не открылись",
         "render_error": "Ошибка обработки",
+        "write_error": "Не записались на диск",
     }
     groups = {}
     for r in rows:
