@@ -22,7 +22,7 @@ pip install requests beautifulsoup4 pillow numpy mediapipe
 ## Три команды
 
 ```bash
-# 1) разведка: что вообще есть на сайте. Ничего не скачивается и не меняется
+# 1) разведка: скачать фото и посмотреть, что нашлось. Кадрирование не делается
 python photo_fix.py https://dr-arushanof.ru/index.php --crawl
 
 # 2) рабочий прогон: скачать и скадрировать всё, кроме трикотажа
@@ -32,7 +32,8 @@ python photo_fix.py https://dr-arushanof.ru/index.php --crawl --max-pages 300 --
 python photo_fix.py --local photos_ready/original --fix
 ```
 
-Сначала стоит запустить первую команду и посмотреть `report.csv`: правильно ли
+Первая команда обходит сайт и складывает оригиналы в `photos_ready/original`, но
+кадры не режет: сначала стоит посмотреть `report.csv` и убедиться, что правильно
 разложились категории. Если нет — поправить таблицу `CATEGORY_RULES` в начале
 `photo_fix.py` под реальные адреса разделов и запустить вторую.
 

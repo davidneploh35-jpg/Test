@@ -7,7 +7,7 @@
     pip install requests beautifulsoup4 pillow numpy mediapipe
 
 Три команды:
-    # 1) разведка: что вообще есть на сайте, ничего не меняется
+    # 1) разведка: скачать фото и посмотреть отчёт, без кадрирования
     python photo_fix.py https://dr-arushanof.ru/index.php --crawl
 
     # 2) рабочий прогон: скачать и скадрировать всё, кроме трикотажа
