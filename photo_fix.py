@@ -4,7 +4,7 @@
 Фотографии каталога -> кадр 3:4 (1920x2560) по правилу своей категории.
 
 Установка (один раз):
-    pip install requests beautifulsoup4 pillow numpy mediapipe opencv-python
+    pip install requests beautifulsoup4 pillow numpy mediapipe
 
 Три команды:
     # 1) разведка: что вообще есть на сайте, ничего не меняется

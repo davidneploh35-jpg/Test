@@ -6,13 +6,18 @@
 ## Установка (один раз)
 
 ```bash
-pip install requests beautifulsoup4 pillow numpy mediapipe opencv-python
+pip install requests beautifulsoup4 pillow numpy mediapipe
 ```
 
 `mediapipe` находит фигуру человека и линию пояса — с ним кадр точнее.
-Если он не встал (например, на Python 3.13 его ещё нет), скрипт не падает: он
-переходит на поиск силуэта по фону. На Linux ему могут понадобиться системные
-библиотеки: `apt-get install libegl1 libgles2`.
+
+Под Windows он собран только для Python 3.9-3.12, и последняя версия там 0.10.21.
+На Python 3.13 и новее он не поставится — тогда ставь Python 3.12 либо работай без
+него: скрипт это переживёт и перейдёт на поиск силуэта по фону, кадр будет грубее.
+Проверено на mediapipe 0.10.21 и 1.0.1.
+
+На Linux ему могут понадобиться системные библиотеки:
+`apt-get install libegl1 libgles2`.
 
 ## Три команды
 
