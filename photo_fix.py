@@ -53,6 +53,8 @@ CATEGORY_RULES = {
     "suit":          ("full",         "kostyumy"),
 
     "bryuk":         ("waist_down",   "bryuki"),
+    "palatstso":     ("waist_down",   "bryuki"),
+    "palazzo":       ("waist_down",   "bryuki"),
     "bruk":          ("waist_down",   "bryuki"),
     "shtan":         ("waist_down",   "bryuki"),
     "pants":         ("waist_down",   "bryuki"),
@@ -833,12 +835,37 @@ def summarize(rows):
 
     by_cat = {}
     for r in rows:
-        if r["status"] == "ready":
+        if r["status"] in ("ready", "downloaded", "skipped_existing"):
             by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
     if by_cat:
         log("\nПо категориям:")
         for cat, n in sorted(by_cat.items(), key=lambda kv: -kv[1]):
             log(f"   {cat:<14} {n}")
+
+
+def show_sections(rows, limit=40):
+    """Какой раздел сайта в какую категорию попал — это и надо проверить перед --fix."""
+    counts = {}
+    for r in rows:
+        page = r.get("page") or ""
+        if not page or r["status"] in ("duplicate", "too_small", "not_an_image"):
+            continue
+        path = urlparse(page).path.rstrip("/") or "/"
+        key = (path, r["category"], r["rule"])
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return
+
+    log("\n--- РАЗДЕЛЫ САЙТА И ПРАВИЛА КАДРА ---")
+    log("Проверь эту таблицу: если раздел попал не в свою категорию,")
+    log("поправь CATEGORY_RULES в начале photo_fix.py и запусти ещё раз.\n")
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0][0]))
+    for (path, category, rule) in [k for k, _ in ordered[:limit]]:
+        n = counts[(path, category, rule)]
+        short = path if len(path) <= 58 else "..." + path[-55:]
+        log(f"   {short:<58} {category:<12} {rule:<12} {n}")
+    if len(ordered) > limit:
+        log(f"   ... ещё разделов: {len(ordered) - limit} (полный список в report.csv)")
 
 
 # ----------------------------------------------------------------------- main
@@ -904,6 +931,7 @@ def main():
         writer.writerows(rows)
 
     summarize(rows)
+    show_sections(rows)
     log(f"\nОтчёт: {report}")
     if args.fix:
         log(f"Готовые фото: {args.out}")
