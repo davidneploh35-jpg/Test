@@ -65,6 +65,10 @@ CATEGORY_RULES = {
     "blous":         ("below_waist",  "bluzki"),
     "blouse":        ("below_waist",  "bluzki"),
     "rubash":        ("below_waist",  "bluzki"),
+    "futbolk":       ("below_waist",  "futbolki"),
+    "svitshot":      ("below_waist",  "futbolki"),
+    "longsliv":      ("below_waist",  "futbolki"),
+    "tolstovk":      ("below_waist",  "futbolki"),
 
     "halat":         ("full",         "halaty"),
     "khalat":        ("full",         "halaty"),
