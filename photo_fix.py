@@ -29,6 +29,7 @@ import shutil
 import sys
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from urllib.parse import urljoin, urlparse, unquote
 
@@ -252,85 +253,84 @@ def fetch(url, timeout=60):
     return r.content
 
 
-def download_all(page_map, out_dir, min_side, overrides, delay=0.2):
-    """Качает картинки, попутно пробуя найти версию без суффикса размера."""
-    os.makedirs(out_dir, exist_ok=True)
-    rows, by_md5, tried_full = [], {}, set()
+def grab_one(url, page_map):
+    """Качает одну картинку, попутно пробуя версию без суффикса размера."""
+    bare = SIZE_SUFFIX.sub("", url)
+    if bare != url:
+        try:
+            return bare, fetch(bare), None
+        except Exception:
+            pass
+    try:
+        return url, fetch(url), None
+    except Exception as e:
+        return url, None, str(e)[:120]
 
-    total = len(page_map)
+
+def download_all(page_map, out_dir, min_side, overrides, jobs=8):
+    """Качает картинки в несколько потоков, на диск пишет по очереди — без гонок."""
+    os.makedirs(out_dir, exist_ok=True)
+    rows, by_md5 = [], {}
+
+    tasks = []
     for i, url in enumerate(sorted(page_map), 1):
-        if i % 25 == 0 or i == total:
-            log(f"   {i}/{total} ({i * 100 // total}%)")
         rule, category = rule_for(list(page_map[url]) + [url], overrides)
         if rule == "SKIP":
             rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
                          "category": category, "rule": rule, "w": "", "h": "",
                          "status": "skipped_category", "note": "категория исключена"})
             continue
+        tasks.append((i, url, rule, category))
 
-        # полная версия: то же имя без -800x1200
-        best_url, best_data = url, None
-        bare = SIZE_SUFFIX.sub("", url)
-        if bare != url and bare not in tried_full:
-            tried_full.add(bare)
-            try:
-                cand = fetch(bare)
-                if len(cand) > 0:
-                    best_url, best_data = bare, cand
-            except Exception:
-                pass
+    total = len(tasks)
+    log(f"   к загрузке: {total}, потоков: {jobs}")
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        fetched = pool.map(lambda t: grab_one(t[1], page_map), tasks)
 
-        if best_data is None:
-            try:
-                best_data = fetch(url)
-            except Exception as e:
-                rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
-                             "category": category, "rule": rule, "w": "", "h": "",
-                             "status": "download_error", "note": str(e)[:120]})
+        for done, ((i, url, rule, category), (best_url, data, error)) in enumerate(
+                zip(tasks, fetched), 1):
+            if done % 25 == 0 or done == total:
+                log(f"   {done}/{total} ({done * 100 // total}%)")
+            page = sorted(page_map[url])[0]
+            base = {"url": url, "page": page, "file": "", "category": category,
+                    "rule": rule, "w": "", "h": "", "note": ""}
+
+            if data is None:
+                rows.append({**base, "status": "download_error", "note": error or ""})
                 continue
 
-        # ключ с категорией: одно и то же фото в двух разделах кадрируется по-разному
-        digest = (category, hashlib.md5(best_data).hexdigest())
-        if digest in by_md5:
-            rows.append({"url": url, "page": sorted(page_map[url])[0], "file": by_md5[digest],
-                         "category": category, "rule": rule, "w": "", "h": "",
-                         "status": "duplicate", "note": "тот же файл"})
-            continue
+            digest = (category, hashlib.md5(data).hexdigest())
+            if digest in by_md5:
+                rows.append({**base, "file": by_md5[digest], "status": "duplicate",
+                             "note": "тот же файл"})
+                continue
 
-        try:
-            im = open_image(best_data)
-            w, h = im.size
-        except Exception as e:
-            rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
-                         "category": category, "rule": rule, "w": "", "h": "",
-                         "status": "not_an_image", "note": str(e)[:120]})
-            continue
+            try:
+                im = open_image(data)
+                w, h = im.size
+            except Exception as e:
+                rows.append({**base, "status": "not_an_image", "note": str(e)[:120]})
+                continue
 
-        if max(w, h) < min_side:
-            rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
-                         "category": category, "rule": rule, "w": w, "h": h,
-                         "status": "too_small", "note": f"иконка/логотип (<{min_side}px)"})
-            continue
+            if max(w, h) < min_side:
+                rows.append({**base, "w": w, "h": h, "status": "too_small",
+                             "note": f"иконка/логотип (<{min_side}px)"})
+                continue
 
-        fname = safe_name(best_url, i)
-        try:
-            with open(os.path.join(out_dir, fname), "wb") as f:
-                f.write(best_data)
-        except OSError as e:
-            note = ("на диске кончилось место" if getattr(e, "errno", None) == 28
-                    else str(e)[:120])
-            rows.append({"url": url, "page": sorted(page_map[url])[0], "file": "",
-                         "category": category, "rule": rule, "w": w, "h": h,
-                         "status": "write_error", "note": note})
-            log(f"   ! не записался {fname}: {note}")
-            continue
-        by_md5[digest] = fname
+            fname = safe_name(best_url, i)
+            try:
+                with open(os.path.join(out_dir, fname), "wb") as f:
+                    f.write(data)
+            except OSError as e:
+                note = ("на диске кончилось место" if getattr(e, "errno", None) == 28
+                        else str(e)[:120])
+                rows.append({**base, "w": w, "h": h, "status": "write_error", "note": note})
+                log(f"   ! не записался {fname}: {note}")
+                continue
 
-        rows.append({"url": best_url, "page": sorted(page_map[url])[0], "file": fname,
-                     "category": category, "rule": rule, "w": w, "h": h,
-                     "status": "downloaded",
-                     "note": "взят полный оригинал" if best_url != url else ""})
-        time.sleep(delay)
+            by_md5[digest] = fname
+            rows.append({**base, "file": fname, "w": w, "h": h, "status": "downloaded",
+                         "note": "взят полный оригинал" if best_url != url else ""})
 
     return rows
 
@@ -911,6 +911,8 @@ def main():
     ap.add_argument("--min-side", type=int, default=400,
                     help="игнорировать картинки мельче этого (иконки)")
     ap.add_argument("--quality", type=int, default=95, help="качество JPEG")
+    ap.add_argument("--jobs", type=int, default=8,
+                    help="сколько картинок качать одновременно (по умолчанию 8)")
     ap.add_argument("--rule-override", action="append", metavar="КЛЮЧ=ПРАВИЛО",
                     help="правило для ключевого слова, например bluzki=below_waist")
     args = ap.parse_args()
@@ -936,7 +938,7 @@ def main():
             return 1
 
         log("\n2. Скачиваю, определяю категорию, ищу полные оригиналы...")
-        rows = download_all(page_map, raw_dir, args.min_side, overrides)
+        rows = download_all(page_map, raw_dir, args.min_side, overrides, jobs=args.jobs)
         for row in rows:
             for field in REPORT_FIELDS:
                 row.setdefault(field, "")
