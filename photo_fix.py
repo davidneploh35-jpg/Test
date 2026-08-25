@@ -867,14 +867,16 @@ def summarize(rows):
             log(f"   {cat:<14} {n}")
 
 
-def show_sections(rows, limit=40):
+def show_sections(rows, limit=60):
     """Какой раздел сайта в какую категорию попал — это и надо проверить перед --fix."""
     counts = {}
     for r in rows:
         page = r.get("page") or ""
         if not page or r["status"] in ("duplicate", "too_small", "not_an_image"):
             continue
-        path = urlparse(page).path.rstrip("/") or "/"
+        parts = [x for x in urlparse(page).path.split("/") if x]
+        # последний кусок — это карточка товара; нас интересует раздел, что выше
+        path = "/" + "/".join(parts[:3]) if parts else "/"
         key = (path, r["category"], r["rule"])
         counts[key] = counts.get(key, 0) + 1
     if not counts:
@@ -886,8 +888,8 @@ def show_sections(rows, limit=40):
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0][0]))
     for (path, category, rule) in [k for k, _ in ordered[:limit]]:
         n = counts[(path, category, rule)]
-        short = path if len(path) <= 58 else "..." + path[-55:]
-        log(f"   {short:<58} {category:<12} {rule:<12} {n}")
+        short = path if len(path) <= 64 else "..." + path[-61:]
+        log(f"   {short:<64} {category:<12} {rule:<12} {n}")
     if len(ordered) > limit:
         log(f"   ... ещё разделов: {len(ordered) - limit} (полный список в report.csv)")
 
