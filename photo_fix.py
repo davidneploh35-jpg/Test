@@ -91,6 +91,10 @@ BELOW_WAIST   = 0.08   # насколько ниже линии бёдер за�
 SIDE_MARGIN   = 0.08   # запас по бокам от ширины фигуры
 PAD_LIMIT     = 0.50   # больше половины кадра фоном не достраиваем: такой кадр негоден
 
+# Простой режим (по умолчанию): ничего не обрезаем, только доводим до 3:4 и 1920x2560.
+# Фото считается «примерно 3:4», если его соотношение отличается не больше чем на эту долю.
+RATIO_TOL = 0.10
+
 # Доли роста от макушки: где примерно талия и бёдра, если позу найти не удалось.
 PROP_HIP = 0.50
 
@@ -715,6 +719,105 @@ def out_name(row):
     return flat_stem(row) + ".jpg"
 
 
+def near_3x4(w, h, tol=RATIO_TOL):
+    return h > 0 and abs(w / h - TARGET_RATIO) <= TARGET_RATIO * tol
+
+
+def fit_to_target(im, sharpen=True):
+    """Доводит до ровно 3:4 дополнением по краю (ничего не обрезая) и до 1920x2560."""
+    import numpy as np
+
+    w, h = im.size
+    if w / h > TARGET_RATIO:              # шире 3:4 -> добавляем высоту
+        new_w, new_h = w, int(round(w / TARGET_RATIO))
+    else:                                 # уже 3:4 -> добавляем ширину
+        new_w, new_h = int(round(h * TARGET_RATIO)), h
+
+    pad_x, pad_y = max(0, new_w - w), max(0, new_h - h)
+    if pad_x or pad_y:
+        left, top = pad_x // 2, pad_y // 2
+        arr = np.pad(np.asarray(im, dtype=np.uint8),
+                     ((top, pad_y - top), (left, pad_x - left), (0, 0)), mode="edge")
+        canvas = Image.fromarray(arr)
+    else:
+        canvas = im
+
+    factor = TARGET_W / canvas.size[0]
+    out = canvas.resize((TARGET_W, TARGET_H), Image.LANCZOS)
+    if sharpen and factor > 1.05:
+        # ресайз вверх всегда мылит; лёгкая нерезкая маска возвращает часть чёткости
+        out = out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=70, threshold=3))
+    return out, 1 - (w * h) / float(new_w * new_h), factor
+
+
+def process_simple(rows, raw_dir, out_dir, args):
+    """Ничего не режет: доводит до 3:4 и 1920x2560. Не 3:4 — откладывает."""
+    other_dir = os.path.join(out_dir, "drugie_proportsii")
+    os.makedirs(out_dir, exist_ok=True)
+
+    done = other = skipped = 0
+    todo = sum(1 for r in rows if r["status"] == "downloaded")
+    seen = 0
+    for row in rows:
+        if row["status"] != "downloaded":
+            continue
+        seen += 1
+        if seen % 50 == 0 or seen == todo:
+            log(f"   {seen}/{todo} ({seen * 100 // max(todo, 1)}%)")
+
+        src = os.path.join(raw_dir, row["file"])
+        stem = os.path.splitext(os.path.basename(row["file"]))[0]
+        dst = os.path.join(out_dir, stem + ".jpg")
+
+        if os.path.exists(dst) and not args.redo:
+            row["status"] = "skipped_existing"
+            row["out_file"] = os.path.basename(dst)
+            skipped += 1
+            continue
+
+        try:
+            im = open_image(src)
+        except Exception as e:
+            row["status"] = "open_error"
+            row["note"] = str(e)[:120]
+            continue
+
+        w, h = im.size
+        if not near_3x4(w, h, args.ratio_tol):
+            os.makedirs(other_dir, exist_ok=True)
+            name = stem + os.path.splitext(row["file"])[1]
+            shutil.copy2(src, os.path.join(other_dir, name))
+            row["status"] = "not_3x4"
+            row["out_file"] = f"drugie_proportsii/{name}"
+            row["note"] = f"соотношение {w / h:.3f}, не трогал"
+            other += 1
+            continue
+
+        try:
+            out, pad_share, factor = fit_to_target(im, sharpen=not args.no_sharpen)
+            out.save(dst, "JPEG", quality=args.quality, subsampling=0, optimize=True)
+        except OSError as e:
+            row["status"] = "render_error"
+            row["note"] = ("на диске кончилось место" if getattr(e, "errno", None) == 28
+                           else str(e)[:120])
+            continue
+        except Exception as e:
+            row["status"] = "render_error"
+            row["note"] = str(e)[:120]
+            continue
+
+        row["status"] = "ready"
+        row["out_file"] = os.path.basename(dst)
+        row["padded"] = f"{pad_share * 100:.1f}%" if pad_share > 0.001 else ""
+        if factor > 1.01:
+            row["upscaled"] = f"x{factor:.1f}"
+            if factor > 2:
+                row["note"] = "оригинал сильно меньше 1920 — будет мылить"
+        done += 1
+
+    return done, other, skipped
+
+
 def process_rows(rows, raw_dir, out_dir, args):
     """Кадрирует всё скачанное. Всё готовое — в одну папку out_dir."""
     manual_dir = os.path.join(out_dir, "need_manual")
@@ -835,6 +938,7 @@ def summarize(rows):
         "ready": "Готово (1920x2560)",
         "head_cropped_in_source": "Голова обрезана в оригинале -> need_manual",
         "skipped_existing": "Пропущено, уже было готово",
+        "not_3x4": "Другие пропорции -> drugie_proportsii (не трогал)",
         "skipped_category": "Пропущено по категории (трикотаж)",
         "downloaded": "Скачано, но не обработано (нет --fix)",
         "duplicate": "Дубликаты",
@@ -869,6 +973,48 @@ def summarize(rows):
         log("\nПо категориям:")
         for cat, n in sorted(by_cat.items(), key=lambda kv: -kv[1]):
             log(f"   {cat:<14} {n}")
+
+
+def show_ratios(rows, tol=RATIO_TOL):
+    """Какие пропорции вообще есть на сайте — чтобы видеть, что подходит под 3:4."""
+    buckets = {}
+    for r in rows:
+        try:
+            w, h = int(r["w"]), int(r["h"])
+        except (ValueError, TypeError):
+            continue
+        if h <= 0:
+            continue
+        ratio = w / h
+        key = round(ratio, 2)
+        buckets[key] = buckets.get(key, 0) + 1
+    if not buckets:
+        return
+
+    log("\n--- ПРОПОРЦИИ ИСХОДНИКОВ ---")
+    fits = sum(n for k, n in buckets.items() if abs(k - TARGET_RATIO) <= TARGET_RATIO * tol)
+    total = sum(buckets.values())
+    log(f"под 3:4 (+-{tol * 100:.0f}%) подходит {fits} из {total}\n")
+    for key, n in sorted(buckets.items(), key=lambda kv: -kv[1])[:12]:
+        mark = "  <- 3:4" if abs(key - TARGET_RATIO) <= TARGET_RATIO * tol else ""
+        log(f"   {key:.2f}   {n:>5}{mark}")
+
+
+def show_sizes(rows):
+    """Насколько исходники мельче 1920 — это и есть будущее мыло."""
+    small = big = 0
+    for r in rows:
+        try:
+            w = int(r["w"])
+        except (ValueError, TypeError):
+            continue
+        if w >= TARGET_W:
+            big += 1
+        else:
+            small += 1
+    if small or big:
+        log(f"\nПо размеру: {big} фото шириной от {TARGET_W}px (увеличивать не надо), "
+            f"{small} мельче — их придётся тянуть вверх")
 
 
 def show_sections(rows, limit=60):
@@ -917,6 +1063,12 @@ def main():
     ap.add_argument("--min-side", type=int, default=400,
                     help="игнорировать картинки мельче этого (иконки)")
     ap.add_argument("--quality", type=int, default=95, help="качество JPEG")
+    ap.add_argument("--smart-crop", action="store_true",
+                    help="старое поведение: кадрировать по категориям товара (режет фото)")
+    ap.add_argument("--ratio-tol", type=float, default=RATIO_TOL,
+                    help="какое отклонение от 3:4 считать «примерно 3:4» (0.10 = 10%%)")
+    ap.add_argument("--no-sharpen", action="store_true",
+                    help="не подрезкостривать после увеличения")
     ap.add_argument("--jobs", type=int, default=8,
                     help="сколько картинок качать одновременно (по умолчанию 8)")
     ap.add_argument("--rule-override", action="append", metavar="КЛЮЧ=ПРАВИЛО",
@@ -952,9 +1104,15 @@ def main():
         drop_near_duplicates(rows, raw_dir)
 
     if args.fix:
-        log("\n3. Кадрирую под 1920x2560...")
-        done, manual, skipped = process_rows(rows, raw_dir, args.out, args)
-        log(f"   готово: {done}, в need_manual: {manual}, пропущено готовых: {skipped}")
+        if args.smart_crop:
+            log("\n3. Кадрирую по категориям (режим --smart-crop)...")
+            done, manual, skipped = process_rows(rows, raw_dir, args.out, args)
+            log(f"   готово: {done}, в need_manual: {manual}, пропущено готовых: {skipped}")
+        else:
+            log("\n3. Довожу до 3:4 и 1920x2560, ничего не обрезая...")
+            done, other, skipped = process_simple(rows, raw_dir, args.out, args)
+            log(f"   готово: {done}, другие пропорции: {other}, "
+                f"пропущено готовых: {skipped}")
 
     report = os.path.join(args.out, "report.csv")
     with open(report, "w", newline="", encoding="utf-8-sig") as f:
@@ -963,7 +1121,10 @@ def main():
         writer.writerows(rows)
 
     summarize(rows)
-    show_sections(rows)
+    show_ratios(rows, args.ratio_tol)
+    show_sizes(rows)
+    if args.smart_crop:
+        show_sections(rows)
     log(f"\nОтчёт: {report}")
     if args.fix:
         log(f"Готовые фото: {args.out}")
