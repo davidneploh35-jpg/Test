@@ -123,5 +123,7 @@ def process(src, dst):
     print(f"{dst}: added top={T}px left={left} right={right} noise={sigma:.2f} "
           f"canvas={B.shape[1]}x{B.shape[0]} -> {OUT_W}x{OUT_H} | headroom {top/H:.4f} -> {nt/OUT_H:.4f} (ref {REF_FRAC:.4f})")
 
-process('/root/.claude/uploads/92ed6dba-dbfa-5416-bab6-95a063ee99a3/4dc6ba23-image.jpg', '/home/user/Test/out/photo_2_headroom.jpg')
-process('/root/.claude/uploads/92ed6dba-dbfa-5416-bab6-95a063ee99a3/977293ce-image.jpg', '/home/user/Test/out/photo_3_headroom.jpg')
+
+if __name__ == '__main__':
+    import sys
+    process(sys.argv[1], sys.argv[2])
