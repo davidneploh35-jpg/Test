@@ -163,7 +163,12 @@ def process(src, dst, px=DEFAULT_PX, fit=True, exact=False):
     depth = background_depth(A)
     clear = int(depth.min())
     if clear < 3:
-        raise SystemExit(f"{src}: the subject touches the top edge, nothing to sample")
+        # the subject grazes the border: there is no clean row above those
+        # columns, but anchors() already ignores everything near the subject,
+        # so the strip is still sampled from real background further out
+        print(f"  note: the subject touches the top edge over "
+              f"{int((depth < 3).sum())} columns, left as shot")
+        depth = np.maximum(depth, 1)
 
     T = int(round(px * H / float(H - px))) if exact else px
     B = pad(A, depth, T, fit)

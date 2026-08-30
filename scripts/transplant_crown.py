@@ -114,13 +114,19 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
     err, s, dx, dy = fit_similarity(yt[sides], yr, sides.astype(np.float64))
     print(f"  outline fit: scale={s:.3f} dx={dx} dy={dy:.1f} rms={np.sqrt(err):.2f}px")
 
+    # The reference supplies the shape of the missing arc, not its position:
+    # anchored to the target's own outline at both ends of the cut, so only the
+    # cut columns are rebuilt and real hair either side is never moved.
     curve = curve_from(yr, s, dx, dy, W)
-    near = np.zeros(W, bool)
-    near[max(0, lo - 30):min(W, hi + 31)] = True
-    # how far short of the true outline the frame cut the hair, per column
-    gap = np.where(near & np.isfinite(curve) & (yt >= 0), yt - curve, 0.0)
-    gap = gauss1d(np.clip(gap, 0, None), 8)      # the traced outline is noisy on
-    gap = np.where(gap > 0.5, gap, 0.0)          # wispy strands; a raw gap spikes
+    span = np.arange(lo, hi + 1)
+    yL, yR = np.median(yt[max(0, lo - 8):lo]), np.median(yt[hi + 1:hi + 9])
+    cL, cR = curve[max(0, lo - 4)], curve[min(W - 1, hi + 4)]
+    gap = np.zeros(W)
+    if np.isfinite(cL) and np.isfinite(cR) and np.isfinite(curve[span]).all():
+        t = (span - lo) / float(max(hi - lo, 1))
+        arc = curve[span] + (yL - cL) * (1 - t) + (yR - cR) * t
+        gap[span] = np.clip(yt[span] - arc, 0, None)
+        gap = np.where(gauss1d(gap, 4) > 0.5, gauss1d(gap, 4), 0.0)
     lift = 0 < gap.max() <= LIFT_MAX
 
     apex = (s * yr[yr >= 0].min() + dy)
