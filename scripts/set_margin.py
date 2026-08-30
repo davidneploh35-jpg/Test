@@ -14,7 +14,39 @@ import sys
 import numpy as np
 from PIL import Image
 import top_margin as tm
+from gauss import gauss1d
 from transplant_crown import matte, outline
+
+SHARP_R = 1.1        # radius of the detail layer, px
+SHARP_A = 0.24       # tuned so an enlargement lands back at the source detail,
+                     # not past it: overshooting reads as crunch, not sharpness
+SHARP_FLOOR = 2.0    # detail below this is grain, not structure
+SHARP_CAP = 14.0     # ceiling on the correction, keeps edges from ringing
+
+
+def blur2d(a, s):
+    out = np.empty_like(a)
+    for i in range(a.shape[0]):
+        out[i] = gauss1d(a[i], s)
+    for j in range(a.shape[1]):
+        out[:, j] = gauss1d(out[:, j], s)
+    return out
+
+
+def resharpen(A):
+    """Put back the edge detail an enlargement costs, without touching the backdrop.
+
+    The correction is gated on how much local detail there is, so grain in a
+    smooth studio background is left alone, and capped so high-contrast edges
+    like the hairline do not ring.
+    """
+    out = np.empty_like(A)
+    for ch in range(A.shape[2]):
+        v = A[:, :, ch]
+        d = v - blur2d(v, SHARP_R)
+        gate = np.clip((np.abs(d) - SHARP_FLOOR) / SHARP_FLOOR, 0, 1)
+        out[:, :, ch] = v + np.clip(d * SHARP_A * gate, -SHARP_CAP, SHARP_CAP)
+    return np.clip(out, 0, 255)
 
 
 def clearance(A):
@@ -33,6 +65,9 @@ def process(src, dst, px=tm.DEFAULT_PX, ratio=None, size=None):
         s = (size[1] - px) / float(H - have)
         im = im.resize((int(round(W * s)), int(round(H * s))), Image.LANCZOS)
         A = np.asarray(im).astype(np.float64)
+        if s > 1.02:                      # an enlargement softens; give the edges back
+            A = resharpen(A)
+            im = Image.fromarray(np.rint(A).astype(np.uint8))
         H, W, _ = A.shape
         have = clearance(A)
         ratio = size[0] / float(size[1])
