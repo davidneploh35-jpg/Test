@@ -17,6 +17,9 @@ import top_margin as tm
 MATTE_K = 30.0          # contrast of the soft hair/background matte
 DOME = 170              # outline rows that still belong to the crown, not falling hair
 SCALE = (0.60, 1.85)    # head-size ratios the reference search covers
+BLEND = 16              # rows of real hair the hand-over ramp is allowed to touch
+FEATHER = 1.4           # px of softness on a lifted outline
+LIFT_MAX = 10           # gap up to which the frame's own hair is stretched instead
 
 
 def matte(A, rows=400):
@@ -62,6 +65,36 @@ def sample(A, mx, my):
     return a * (1 - fy) + b * fy
 
 
+def curve_from(yr, s, dx, dy, W):
+    """The reference outline expressed in the target's coordinates."""
+    ok = np.where(yr >= 0)[0]
+    x9 = (np.arange(W) - dx) / s
+    inb = (x9 >= ok.min()) & (x9 <= ok.max())
+    c = s * np.interp(np.clip(x9, ok.min(), ok.max()), ok, yr[ok]) + dy
+    return np.where(inb, c, np.inf)
+
+
+def lift_crown(B, N, yt, curve, cols, span=50):
+    """Stretch the target's own hair up to the fitted outline.
+
+    Only a few pixels are missing here, so borrowing texture from another frame
+    costs more than it buys: this walks each column's top `span` rows upward by
+    the gap, fading the shift out, which keeps the photo's own strands.
+    """
+    for xi in cols:
+        g = yt[xi] - curve[xi]
+        y0 = int(np.floor(curve[xi] + N))
+        y1 = int(yt[xi] + N + span)
+        col = B[:, xi, :].copy()
+        ys = np.arange(y0, y1, dtype=np.float64)
+        t = (ys - (curve[xi] + N)) / max(y1 - (curve[xi] + N), 1e-6)
+        src = np.clip(ys + g * (1 - t), 0, B.shape[0] - 2)
+        lo = np.floor(src).astype(int)
+        f = (src - lo)[:, None]
+        B[y0:y1, xi, :] = col[lo] * (1 - f) + col[lo + 1] * f
+    return B
+
+
 def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
     T = np.asarray(Image.open(tgt_path).convert('RGB')).astype(np.float64)
     R = np.asarray(Image.open(ref_path).convert('RGB')).astype(np.float64)
@@ -80,41 +113,59 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
     err, s, dx, dy = fit_similarity(yt[sides], yr, sides.astype(np.float64))
     print(f"  outline fit: scale={s:.3f} dx={dx} dy={dy:.1f} rms={np.sqrt(err):.2f}px")
 
+    curve = curve_from(yr, s, dx, dy, W)
+    near = np.zeros(W, bool)
+    near[max(0, lo - 40):min(W, hi + 41)] = True
+    gap = np.where(near & np.isfinite(curve) & (yt >= 0), yt - curve, 0.0)
+    gap = np.clip(gap, 0, None)
+    lift = gap.max() <= LIFT_MAX
+
     apex = (s * yr[yr >= 0].min() + dy)
-    crown = int(np.ceil(max(0.0, -apex))) + 6
+    crown = int(np.ceil(max(gap.max(), -apex, 0.0))) + 6
     Tm = px
     N = Tm + crown
 
     depth = np.maximum(tm.background_depth(T), 1)
     B = tm.extend_top(T, N, depth)                       # background above everything
 
-    # warp the reference into the extended target frame
-    ys, xs = np.mgrid[0:N + 320, 0:W]
-    mx = (xs - dx) / s
-    my = (ys - N - dy) / s
-    Rw = sample(R, mx, my)
-    Aw = sample(ar[..., None], mx, my)[..., 0]
-    inside = (mx >= 0) & (mx < W - 1) & (my >= 0) & (my < ar.shape[0] - 1)
-    Aw = np.where(inside, Aw, 0.0)
+    if lift:
+        cols = np.where(gap > 0.3)[0]
+        print(f"  lifting the frame's own hair by up to {gap.max():.1f}px over {len(cols)} columns")
+        B = lift_crown(B, N, yt, curve, cols)
+        alpha = np.clip(((np.arange(N + 60)[:, None] - (curve[None, :] + N)) / FEATHER) + 0.5, 0, 1)
+        touched = np.zeros(W, bool)
+        touched[cols] = True
+        a = np.where(touched[None, :], alpha, 1.0)[:, :, None]
+        bg = tm.extend_top(T, N, depth)[:N + 60]
+        B[:N + 60] = B[:N + 60] * a + bg * (1 - a)
 
-    # tone match on hair both frames agree on
-    band = slice(N + 30, N + 150)
-    m = (Aw[band] > 0.95) & (at[30:150] > 0.95)
-    if m.sum() > 2000:
-        for ch in range(3):
-            a_, b_ = Rw[band][..., ch][m], B[band][..., ch][m]
-            g = b_.std() / max(a_.std(), 1e-6)
-            Rw[..., ch] = (Rw[..., ch] - a_.mean()) * np.clip(g, 0.8, 1.25) + b_.mean()
-        print(f"  tone matched on {int(m.sum())} px of shared hair")
+    else:
+        # warp the reference into the extended target frame
+        ys, xs = np.mgrid[0:N + 320, 0:W]
+        mx = (xs - dx) / s
+        my = (ys - N - dy) / s
+        Rw = sample(R, mx, my)
+        Aw = sample(ar[..., None], mx, my)[..., 0]
+        inside = (mx >= 0) & (mx < W - 1) & (my >= 0) & (my < ar.shape[0] - 1)
+        Aw = np.where(inside, Aw, 0.0)
 
-    # vertical blend: reference above the cut, real hair below it
-    y1, y2 = N - 2, N + 90                               # ramp lives inside the hair
-    w = np.clip((y2 - ys) / float(y2 - y1), 0, 1)
-    a = np.clip(Aw, 0, 1) * w
-    B[:N + 320] = Rw * a[..., None] + B[:N + 320] * (1 - a[..., None])
+        # tone match on hair both frames agree on
+        band = slice(N + 30, N + 150)
+        m = (Aw[band] > 0.95) & (at[30:150] > 0.95)
+        if m.sum() > 2000:
+            for ch in range(3):
+                a_, b_ = Rw[band][..., ch][m], B[band][..., ch][m]
+                g = b_.std() / max(a_.std(), 1e-6)
+                Rw[..., ch] = (Rw[..., ch] - a_.mean()) * np.clip(g, 0.8, 1.25) + b_.mean()
+            print(f"  tone matched on {int(m.sum())} px of shared hair")
 
-    # the rebuilt crown needs `crown` rows of its own; the margin sits above it
-    B = B[crown - (N - Tm - crown):] if False else B
+        # vertical blend: the reference fills only what the frame cut off, and hands
+        # back to the real hair a few rows in — a wide ramp washes out real texture
+        y1, y2 = N - 1, N + BLEND
+        w = np.clip((y2 - ys) / float(y2 - y1), 0, 1)
+        a = np.clip(Aw, 0, 1) * w
+        B[:N + 320] = Rw * a[..., None] + B[:N + 320] * (1 - a[..., None])
+
     side = int(round((H + N) * W / float(H))) - W
     left = side // 2                                  # keep the subject centred
     B = tm.extend_side(tm.extend_side(B, left, True), side - left, False)
