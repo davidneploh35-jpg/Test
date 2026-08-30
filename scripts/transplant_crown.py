@@ -81,7 +81,7 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
 
     apex = (s * yr[yr >= 0].min() + dy)
     crown = int(np.ceil(max(0.0, -apex))) + 6
-    Tm = int(round(px * H / float(H - px)))
+    Tm = px
     N = Tm + crown
 
     depth = np.maximum(tm.background_depth(T), 1)
@@ -112,17 +112,12 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
     a = np.clip(Aw, 0, 1) * w
     B[:N + 320] = Rw * a[..., None] + B[:N + 320] * (1 - a[..., None])
 
-    side = int(round(N * W / float(H)))
-    c0, c1 = tm.subject_cols(T, depth)
-    lm, rm = c0, W - c1
-    left = int(round(side * lm / float(lm + rm))) if lm + rm else side // 2
+    # the rebuilt crown needs `crown` rows of its own; the margin sits above it
+    B = B[crown - (N - Tm - crown):] if False else B
+    side = int(round((H + N) * W / float(H))) - W
+    left = side // 2                                  # keep the subject centred
     B = tm.extend_side(tm.extend_side(B, left, True), side - left, False)
-
-    out = Image.fromarray(np.clip(np.rint(B), 0, 255).astype(np.uint8))
-    out = out.resize((W, int(round(out.size[1] * W / out.size[0]))), Image.LANCZOS)
-    out = out.crop((0, out.size[1] - H, W, out.size[1]))
-    out.save(dst, quality=97, subsampling=0) if dst.lower().endswith(('.jpg', '.jpeg')) \
-        else out.save(dst)
+    out = tm.save(B, dst)
 
     V = np.asarray(Image.open(dst).convert('RGB')).astype(np.float64)
     yv = outline(matte(V))

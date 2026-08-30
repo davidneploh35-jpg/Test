@@ -1,14 +1,17 @@
 """Add a small strip of background above the subject.
 
-Usage:  python3 scripts/top_margin.py IN OUT [--px 55] [--no-fit]
+Usage:  python3 scripts/top_margin.py IN OUT [--px 55] [--exact] [--no-fit]
 
 The strip is synthesised from the studio background that is already in the
 frame: a per-column anchor colour taken from the real top rows, a vertical
 gradient measured down the columns that stay clear of the subject, and grain
 matched to the background's own noise.  The sides are widened by the same
-proportion so the frame keeps its aspect ratio and the result is resampled
-back to the input size, so --px is the margin you get in the delivered file.
-Pass --no-fit to keep the enlarged canvas instead.
+proportion so the aspect ratio holds, and the photo itself is left alone —
+every original pixel keeps its place, so the frame grows by --px.
+
+--exact resamples back to the input size instead.  That costs sharpness across
+the whole picture, so use it only when the delivered file has to keep exactly
+the original dimensions.  --no-fit skips the side padding.
 """
 import sys
 import numpy as np
@@ -58,14 +61,24 @@ def column_slopes(A, depth):
     return out
 
 
-def anchors(A, depth):
-    """Colour of the real top edge per column, with blocked columns filled in."""
+def anchors(A, depth, guard=16):
+    """Colour of the real top edge per column, with blocked columns filled in.
+
+    Columns next to the subject are dropped as well: JPEG ringing along a dark
+    hairline leaves a bright fringe there, and anchoring on it paints a pale
+    streak up the whole strip.
+    """
     W, C = A.shape[1], A.shape[2]
     valid = depth >= 3
+    keep = np.ones(W, bool)                       # erode by `guard` columns
+    run = np.cumsum(np.r_[0, valid.astype(int)])
+    for i in range(W):
+        a, b = max(0, i - guard), min(W, i + guard + 1)
+        keep[i] = (run[b] - run[a]) == (b - a)
     out = np.zeros((W, C))
     for ch in range(C):
-        b = A[:3, :, ch].mean(axis=0)
-        out[:, ch] = gauss1d(fill_invalid(b, valid), 4)
+        b = np.median(A[:3, :, ch], axis=0)
+        out[:, ch] = gauss1d(fill_invalid(b, keep), 8)
     return out
 
 
@@ -121,7 +134,29 @@ def subject_cols(A, depth):
     return (int(blocked.min()), int(blocked.max())) if len(blocked) else (0, A.shape[1] - 1)
 
 
-def process(src, dst, px=DEFAULT_PX, fit=True):
+def pad(A, depth, px, fit=True):
+    """Grow the frame by `px` at the top, keeping the aspect ratio."""
+    H, W, _ = A.shape
+    B = extend_top(A, px, depth)
+    if fit:
+        side = int(round((H + px) * W / float(H))) - W
+        left = side // 2                          # keep the subject centred as shot
+        B = extend_side(extend_side(B, left, True), side - left, False)
+    return B
+
+
+def save(B, dst, size=None):
+    out = Image.fromarray(np.clip(np.rint(B), 0, 255).astype(np.uint8))
+    if size is not None:
+        out = out.resize(size, Image.LANCZOS)
+    if dst.lower().endswith(('.jpg', '.jpeg')):
+        out.save(dst, quality=98, subsampling=0)
+    else:
+        out.save(dst)
+    return out
+
+
+def process(src, dst, px=DEFAULT_PX, fit=True, exact=False):
     im = Image.open(src).convert('RGB')
     A = np.asarray(im).astype(np.float64)
     H, W, _ = A.shape
@@ -130,24 +165,9 @@ def process(src, dst, px=DEFAULT_PX, fit=True):
     if clear < 3:
         raise SystemExit(f"{src}: the subject touches the top edge, nothing to sample")
 
-    # the strip shrinks when the frame is resampled back, so oversize it first
-    T = int(round(px * H / float(H - px))) if fit else px
-    B = extend_top(A, T, depth)
-
-    if fit:                                        # widen so W/H is unchanged
-        side = int(round(T * W / float(H)))
-        c0, c1 = subject_cols(A, depth)
-        lm, rm = c0, W - c1
-        left = int(round(side * lm / float(lm + rm))) if lm + rm else side // 2
-        B = extend_side(extend_side(B, left, True), side - left, False)
-
-    out = Image.fromarray(np.clip(np.rint(B), 0, 255).astype(np.uint8))
-    if fit:
-        out = out.resize((W, H), Image.LANCZOS)
-    if dst.lower().endswith(('.jpg', '.jpeg')):
-        out.save(dst, quality=97, subsampling=0)
-    else:
-        out.save(dst)
+    T = int(round(px * H / float(H - px))) if exact else px
+    B = pad(A, depth, T, fit)
+    out = save(B, dst, (W, H) if exact else None)
 
     V = np.asarray(Image.open(dst).convert('RGB')).astype(np.float64)
     print(f"{dst}: +{T}px strip, grain={bg_noise(A, depth):.2f}, {W}x{H} -> {out.size[0]}x{out.size[1]}"
@@ -156,12 +176,14 @@ def process(src, dst, px=DEFAULT_PX, fit=True):
 
 if __name__ == '__main__':
     argv = sys.argv[1:]
-    px, fit, args = DEFAULT_PX, True, []
+    px, fit, exact, args = DEFAULT_PX, True, False, []
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == '--no-fit':
             fit = False
+        elif a == '--exact':
+            exact = True
         elif a.startswith('--px='):
             px = int(a.split('=', 1)[1])
         elif a == '--px':
@@ -174,4 +196,4 @@ if __name__ == '__main__':
         i += 1
     if len(args) != 2:
         raise SystemExit(__doc__)
-    process(args[0], args[1], px=px, fit=fit)
+    process(args[0], args[1], px=px, fit=fit, exact=exact)
