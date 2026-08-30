@@ -18,7 +18,7 @@ MATTE_K = 30.0          # contrast of the soft hair/background matte
 DOME = 170              # outline rows that still belong to the crown, not falling hair
 SCALE = (0.60, 1.85)    # head-size ratios the reference search covers
 BLEND = 16              # rows of real hair the hand-over ramp is allowed to touch
-FEATHER = 1.4           # px of softness on a lifted outline
+FEATHER = 2.2           # px of softness on a lifted outline
 LIFT_MAX = 10           # gap up to which the frame's own hair is stretched instead
 
 
@@ -71,7 +71,8 @@ def curve_from(yr, s, dx, dy, W):
     x9 = (np.arange(W) - dx) / s
     inb = (x9 >= ok.min()) & (x9 <= ok.max())
     c = s * np.interp(np.clip(x9, ok.min(), ok.max()), ok, yr[ok]) + dy
-    return np.where(inb, c, np.inf)
+    c = gauss1d(c, 6)          # the traced outline is ragged on wispy strands,
+    return np.where(inb, c, np.inf)   # and a ragged curve combs the rebuilt edge
 
 
 def lift_crown(B, N, yt, curve, cols, span=50):
@@ -115,10 +116,12 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
 
     curve = curve_from(yr, s, dx, dy, W)
     near = np.zeros(W, bool)
-    near[max(0, lo - 40):min(W, hi + 41)] = True
+    near[max(0, lo - 30):min(W, hi + 31)] = True
+    # how far short of the true outline the frame cut the hair, per column
     gap = np.where(near & np.isfinite(curve) & (yt >= 0), yt - curve, 0.0)
-    gap = np.clip(gap, 0, None)
-    lift = gap.max() <= LIFT_MAX
+    gap = gauss1d(np.clip(gap, 0, None), 8)      # the traced outline is noisy on
+    gap = np.where(gap > 0.5, gap, 0.0)          # wispy strands; a raw gap spikes
+    lift = 0 < gap.max() <= LIFT_MAX
 
     apex = (s * yr[yr >= 0].min() + dy)
     crown = int(np.ceil(max(gap.max(), -apex, 0.0))) + 6
