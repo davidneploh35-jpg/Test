@@ -16,6 +16,7 @@ import top_margin as tm
 
 MATTE_K = 30.0          # contrast of the soft hair/background matte
 DOME = 170              # outline rows that still belong to the crown, not falling hair
+SCALE = (0.60, 1.85)    # head-size ratios the reference search covers
 
 
 def matte(A, rows=400):
@@ -34,7 +35,7 @@ def fit_similarity(y_t, y_r, cols_t):
     """Grid search s, dx, dy mapping the reference dome onto the target's."""
     ok = np.where((y_r >= 0) & (y_r <= DOME))[0]
     best = None
-    for s in np.arange(0.85, 1.251, 0.002):
+    for s in np.arange(SCALE[0], SCALE[1], 0.002):
         for dx in range(-200, 201):
             x9 = (cols_t - dx) / s
             m = (x9 >= ok.min()) & (x9 <= ok.max())
