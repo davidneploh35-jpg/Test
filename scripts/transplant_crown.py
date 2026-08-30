@@ -19,7 +19,9 @@ DOME = 170              # outline rows that still belong to the crown, not falli
 SCALE = (0.60, 1.85)    # head-size ratios the reference search covers
 BLEND = 16              # rows of real hair the hand-over ramp is allowed to touch
 FEATHER = 2.2           # px of softness on a lifted outline
-LIFT_MAX = 10           # gap up to which the frame's own hair is stretched instead
+LIFT_MAX = 25           # gap up to which the frame's own hair is stretched instead
+NOTHING = 8.0           # a shallower graze than this is left alone: rebuilding a
+                        # few px of crown costs more artefacts than the flat does
 
 
 def matte(A, rows=400):
@@ -75,7 +77,7 @@ def curve_from(yr, s, dx, dy, W):
     return np.where(inb, c, np.inf)   # and a ragged curve combs the rebuilt edge
 
 
-def lift_crown(B, N, yt, curve, cols, span=50):
+def lift_crown(B, N, yt, curve, cols, span):
     """Stretch the target's own hair up to the fitted outline.
 
     Only a few pixels are missing here, so borrowing texture from another frame
@@ -127,20 +129,25 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
         arc = curve[span] + (yL - cL) * (1 - t) + (yR - cR) * t
         gap[span] = np.clip(yt[span] - arc, 0, None)
         gap = np.where(gauss1d(gap, 4) > 0.5, gauss1d(gap, 4), 0.0)
-    lift = 0 < gap.max() <= LIFT_MAX
+    lift = NOTHING < gap.max() <= LIFT_MAX
+    intact = gap.max() <= NOTHING
 
     apex = (s * yr[yr >= 0].min() + dy)
-    crown = int(np.ceil(max(gap.max(), -apex, 0.0))) + 6
+    crown = 4 if intact else int(np.ceil(max(gap.max(), 0.0))) + 6
     Tm = px
     N = Tm + crown
 
     depth = np.maximum(tm.background_depth(T), 1)
     B = tm.extend_top(T, N, depth)                       # background above everything
 
-    if lift:
+    if intact:
+        print(f"  the border only grazes the crown ({gap.max():.1f}px) - hair left untouched")
+    elif lift:
         cols = np.where(gap > 0.3)[0]
-        print(f"  lifting the frame's own hair by up to {gap.max():.1f}px over {len(cols)} columns")
-        B = lift_crown(B, N, yt, curve, cols)
+        span = int(max(50, 8 * gap.max()))           # gentler stretch for a bigger gap
+        print(f"  lifting the frame's own hair by up to {gap.max():.1f}px "
+              f"over {len(cols)} columns, faded out across {span} rows")
+        B = lift_crown(B, N, yt, curve, cols, span)
         alpha = np.clip(((np.arange(N + 60)[:, None] - (curve[None, :] + N)) / FEATHER) + 0.5, 0, 1)
         touched = np.zeros(W, bool)
         touched[cols] = True
@@ -148,7 +155,7 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
         bg = tm.extend_top(T, N, depth)[:N + 60]
         B[:N + 60] = B[:N + 60] * a + bg * (1 - a)
 
-    else:
+    elif not intact:
         # warp the reference into the extended target frame
         ys, xs = np.mgrid[0:N + 320, 0:W]
         mx = (xs - dx) / s
@@ -182,7 +189,7 @@ def run(tgt_path, ref_path, dst, px=tm.DEFAULT_PX):
 
     V = np.asarray(Image.open(dst).convert('RGB')).astype(np.float64)
     yv = outline(matte(V))
-    print(f"{dst}: crown rebuilt {crown - 6}px, +{Tm}px margin, "
+    print(f"{dst}: crown rebuilt {0 if intact else crown - 6}px, +{Tm}px margin, "
           f"clearance 0 -> {int(yv[yv >= 0].min())}px, {out.size[0]}x{out.size[1]}")
 
 
