@@ -1,11 +1,14 @@
 """Bring a frame to a given amount of background above the head.
 
-Usage:  python3 scripts/set_margin.py IN OUT [--px 55] [--ratio 0.75]
+Usage:  python3 scripts/set_margin.py IN OUT [--px 55] [--ratio 0.75] [--size WxH]
 
 Frames shot tight get the strip synthesised above them, exactly as
 top_margin.py does it. Frames shot loose are cropped down instead - no pixel is
 invented and none is resampled - and the sides are cropped to match so the
 aspect ratio survives.
+
+--size asks for exact delivered dimensions. The frame is scaled once, before
+the crop, so the picture goes through a single resample rather than two.
 """
 import sys
 import numpy as np
@@ -19,11 +22,21 @@ def clearance(A):
     return int(y[y >= 0].min()) if (y >= 0).any() else 0
 
 
-def process(src, dst, px=tm.DEFAULT_PX, ratio=None):
+def process(src, dst, px=tm.DEFAULT_PX, ratio=None, size=None):
     im = Image.open(src).convert('RGB')
     A = np.asarray(im).astype(np.float64)
     H, W, _ = A.shape
     have = clearance(A)
+
+    if size:
+        # solve for the scale that lands on `size` once `have` is cropped to `px`
+        s = (size[1] - px) / float(H - have)
+        im = im.resize((int(round(W * s)), int(round(H * s))), Image.LANCZOS)
+        A = np.asarray(im).astype(np.float64)
+        H, W, _ = A.shape
+        have = clearance(A)
+        ratio = size[0] / float(size[1])
+        print(f"  scaled by {s:.4f} to {W}x{H} before cropping")
 
     if have <= px:
         tm.process(src, dst, px=px - have, ratio=ratio or W / float(H))
@@ -45,7 +58,7 @@ def process(src, dst, px=tm.DEFAULT_PX, ratio=None):
 
 if __name__ == '__main__':
     argv = sys.argv[1:]
-    px, ratio, args = tm.DEFAULT_PX, None, []
+    px, ratio, size, args = tm.DEFAULT_PX, None, None, []
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -59,6 +72,11 @@ if __name__ == '__main__':
             ratio = float(argv[i])
         elif a.startswith('--ratio='):
             ratio = float(a.split('=', 1)[1])
+        elif a == '--size':
+            i += 1
+            size = tuple(int(v) for v in argv[i].lower().split('x'))
+        elif a.startswith('--size='):
+            size = tuple(int(v) for v in a.split('=', 1)[1].lower().split('x'))
         elif a.startswith('--'):
             raise SystemExit(f'unknown flag {a}')
         else:
@@ -66,4 +84,4 @@ if __name__ == '__main__':
         i += 1
     if len(args) != 2:
         raise SystemExit(__doc__)
-    process(args[0], args[1], px, ratio)
+    process(args[0], args[1], px, ratio, size)
