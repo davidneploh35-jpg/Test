@@ -1,6 +1,7 @@
 """Add a small strip of background above the subject.
 
-Usage:  python3 scripts/top_margin.py IN OUT [--px 55] [--exact] [--no-fit]
+Usage:  python3 scripts/top_margin.py IN OUT [--px 55] [--ratio 0.75] [--exact]
+                                       [--no-fit]
 
 The strip is synthesised from the studio background that is already in the
 frame: a per-column anchor colour taken from the real top rows, a vertical
@@ -8,6 +9,9 @@ gradient measured down the columns that stay clear of the subject, and grain
 matched to the background's own noise.  The sides are widened by the same
 proportion so the aspect ratio holds, and the photo itself is left alone —
 every original pixel keeps its place, so the frame grows by --px.
+
+--ratio pads the sides out to a given width/height as well, so frames shot at
+different crops can be delivered in one format.
 
 --exact resamples back to the input size instead.  That costs sharpness across
 the whole picture, so use it only when the delivered file has to keep exactly
@@ -110,6 +114,9 @@ def extend_top(A, n, depth):
     return np.concatenate([out, A], axis=0)
 
 
+SIDE_REACH = 70         # px over which a side gradient is still trusted
+
+
 def extend_side(A, n, left):
     if n <= 0:
         return A
@@ -119,12 +126,16 @@ def extend_side(A, n, left):
     ym = y.mean()
     denom = ((y - ym) ** 2).sum()
     out = np.zeros((H, n, C))
+    d = np.arange(1, n + 1, dtype=np.float64)
+    # follow the measured gradient near the edge, then level off: extrapolating a
+    # slope linearly across hundreds of px drifts the background off its own tone
+    reach = SIDE_REACH * (1.0 - np.exp(-d / SIDE_REACH))
+    xs = (-reach[::-1] if left else reach)[None, :]
     for ch in range(C):
         vals = (A[:, :win, ch] if left else A[:, W - win:, ch]).T
         s = ((y - ym)[:, None] * (vals - vals.mean(axis=0))).sum(axis=0) / denom
         s = np.clip(gauss1d(s, 40), -SLOPE_LIMIT, SLOPE_LIMIT)
         edge = gauss1d((A[:, :3, ch] if left else A[:, W - 3:, ch]).mean(axis=1), 3)
-        xs = (np.arange(-n, 0) if left else np.arange(1, n + 1))[None, :]
         out[:, :, ch] = edge[:, None] + s[:, None] * xs
     return np.concatenate([out, A] if left else [A, out], axis=1)
 
@@ -134,12 +145,13 @@ def subject_cols(A, depth):
     return (int(blocked.min()), int(blocked.max())) if len(blocked) else (0, A.shape[1] - 1)
 
 
-def pad(A, depth, px, fit=True):
-    """Grow the frame by `px` at the top, keeping the aspect ratio."""
+def pad(A, depth, px, fit=True, ratio=None):
+    """Grow the frame by `px` at the top, then out to `ratio` (default: keep)."""
     H, W, _ = A.shape
     B = extend_top(A, px, depth)
     if fit:
-        side = int(round((H + px) * W / float(H))) - W
+        target = ratio if ratio else W / float(H)
+        side = int(round((H + px) * target)) - W
         left = side // 2                          # keep the subject centred as shot
         B = extend_side(extend_side(B, left, True), side - left, False)
     return B
@@ -156,7 +168,7 @@ def save(B, dst, size=None):
     return out
 
 
-def process(src, dst, px=DEFAULT_PX, fit=True, exact=False):
+def process(src, dst, px=DEFAULT_PX, fit=True, exact=False, ratio=None):
     im = Image.open(src).convert('RGB')
     A = np.asarray(im).astype(np.float64)
     H, W, _ = A.shape
@@ -171,7 +183,7 @@ def process(src, dst, px=DEFAULT_PX, fit=True, exact=False):
         depth = np.maximum(depth, 1)
 
     T = int(round(px * H / float(H - px))) if exact else px
-    B = pad(A, depth, T, fit)
+    B = pad(A, depth, T, fit, ratio)
     out = save(B, dst, (W, H) if exact else None)
 
     V = np.asarray(Image.open(dst).convert('RGB')).astype(np.float64)
@@ -181,7 +193,7 @@ def process(src, dst, px=DEFAULT_PX, fit=True, exact=False):
 
 if __name__ == '__main__':
     argv = sys.argv[1:]
-    px, fit, exact, args = DEFAULT_PX, True, False, []
+    px, fit, exact, ratio, args = DEFAULT_PX, True, False, None, []
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -189,6 +201,11 @@ if __name__ == '__main__':
             fit = False
         elif a == '--exact':
             exact = True
+        elif a.startswith('--ratio='):
+            ratio = float(a.split('=', 1)[1])
+        elif a == '--ratio':
+            i += 1
+            ratio = float(argv[i])
         elif a.startswith('--px='):
             px = int(a.split('=', 1)[1])
         elif a == '--px':
@@ -201,4 +218,4 @@ if __name__ == '__main__':
         i += 1
     if len(args) != 2:
         raise SystemExit(__doc__)
-    process(args[0], args[1], px=px, fit=fit, exact=exact)
+    process(args[0], args[1], px=px, fit=fit, exact=exact, ratio=ratio)
