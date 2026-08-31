@@ -49,9 +49,22 @@ def resharpen(A):
     return np.clip(out, 0, 255)
 
 
-def clearance(A):
-    y = outline(matte(A, rows=min(900, A.shape[0])))
-    return int(y[y >= 0].min()) if (y >= 0).any() else 0
+def clearance(A, run=12):
+    """Rows of background above the subject.
+
+    Takes the first row carrying a `run` of adjacent subject pixels rather than
+    the first stray one: a speck of floor dirt or a mark on the backdrop at the
+    frame edge is not the top of anybody's head.
+    """
+    rows = min(int(A.shape[0] * 0.4), 1400)
+    a = matte(A, rows=rows) > 0.5
+    for r in range(a.shape[0]):
+        on = np.where(a[r])[0]
+        if len(on) >= run:
+            for part in np.split(on, np.where(np.diff(on) > 1)[0] + 1):
+                if len(part) >= run:
+                    return r
+    return 0
 
 
 def process(src, dst, px=tm.DEFAULT_PX, ratio=None, size=None):
