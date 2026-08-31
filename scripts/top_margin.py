@@ -1,0 +1,221 @@
+"""Add a small strip of background above the subject.
+
+Usage:  python3 scripts/top_margin.py IN OUT [--px 55] [--ratio 0.75] [--exact]
+                                       [--no-fit]
+
+The strip is synthesised from the studio background that is already in the
+frame: a per-column anchor colour taken from the real top rows, a vertical
+gradient measured down the columns that stay clear of the subject, and grain
+matched to the background's own noise.  The sides are widened by the same
+proportion so the aspect ratio holds, and the photo itself is left alone —
+every original pixel keeps its place, so the frame grows by --px.
+
+--ratio pads the sides out to a given width/height as well, so frames shot at
+different crops can be delivered in one format.
+
+--exact resamples back to the input size instead.  That costs sharpness across
+the whole picture, so use it only when the delivered file has to keep exactly
+the original dimensions.  --no-fit skips the side padding.
+"""
+import sys
+import numpy as np
+from PIL import Image
+from gauss import gauss1d
+
+DEFAULT_PX = 55
+SLOPE_LIMIT = 0.15          # max colour drift per row, keeps extrapolation sane
+GRAD_DEPTH = 120            # rows used to measure the vertical gradient
+
+
+def background_depth(A):
+    """Per column: how many rows from the top are still clean background."""
+    g = A.mean(axis=2)
+    bg = np.median(g[:3])
+    is_bg = g > (bg - 18)
+    blocked = ~is_bg
+    depth = np.where(blocked.any(axis=0), blocked.argmax(axis=0), A.shape[0])
+    return depth.astype(int)
+
+
+def fill_invalid(vals, valid):
+    """Interpolate a per-column series across the columns we could not measure."""
+    x = np.arange(len(vals), dtype=np.float64)
+    if not valid.any():
+        raise SystemExit("no clean background column to sample")
+    return np.interp(x, x[valid], vals[valid])
+
+
+def column_slopes(A, depth):
+    """Vertical colour gradient per column, measured where the view is clear."""
+    H, W, C = A.shape
+    n = min(GRAD_DEPTH, H // 4)
+    valid = depth >= n
+    if valid.sum() < W // 20:                      # subject reaches high on both sides
+        n = max(6, int(depth.max() * 0.8))
+        valid = depth >= n
+    y = np.arange(n, dtype=np.float64)
+    ym = y.mean()
+    denom = ((y - ym) ** 2).sum()
+    out = np.zeros((W, C))
+    for ch in range(C):
+        vals = A[:n, :, ch]                        # (n, W)
+        s = ((y - ym)[:, None] * (vals - vals.mean(axis=0))).sum(axis=0) / denom
+        s = fill_invalid(s, valid)
+        out[:, ch] = np.clip(gauss1d(s, 60), -SLOPE_LIMIT, SLOPE_LIMIT)
+    return out
+
+
+def anchors(A, depth, guard=16):
+    """Colour of the real top edge per column, with blocked columns filled in.
+
+    Columns next to the subject are dropped as well: JPEG ringing along a dark
+    hairline leaves a bright fringe there, and anchoring on it paints a pale
+    streak up the whole strip.
+    """
+    W, C = A.shape[1], A.shape[2]
+    valid = depth >= 3
+    keep = np.ones(W, bool)                       # erode by `guard` columns
+    run = np.cumsum(np.r_[0, valid.astype(int)])
+    for i in range(W):
+        a, b = max(0, i - guard), min(W, i + guard + 1)
+        keep[i] = (run[b] - run[a]) == (b - a)
+    out = np.zeros((W, C))
+    for ch in range(C):
+        b = np.median(A[:3, :, ch], axis=0)
+        out[:, ch] = gauss1d(fill_invalid(b, keep), 8)
+    return out
+
+
+def bg_noise(A, depth):
+    """High-frequency residual of a clean background patch."""
+    W = A.shape[1]
+    col = int(np.argmax(depth))                    # deepest clear column
+    c0, c1 = max(0, col - 90), min(W, col + 90)
+    rows = min(depth[c0:c1].min(), 60)
+    patch = A[:max(rows, 12), c0:c1, :].astype(np.float64)
+    res = []
+    for ch in range(3):
+        v = patch[:, :, ch]
+        m = sum(np.roll(np.roll(v, dy, 0), dx, 1)
+                for dy in (-1, 0, 1) for dx in (-1, 0, 1)) / 9.0
+        res.append((v - m)[2:-2, 2:-2].std())
+    return float(np.mean(res))
+
+
+def extend_top(A, n, depth):
+    H, W, C = A.shape
+    s = column_slopes(A, depth)
+    b = anchors(A, depth)
+    ys = np.arange(-n, 0, dtype=np.float64)[:, None]
+    out = np.zeros((n, W, C))
+    for ch in range(C):
+        out[:, :, ch] = b[None, :, ch] + s[None, :, ch] * ys
+    out += np.random.default_rng(7).normal(0, bg_noise(A, depth), out.shape)
+    return np.concatenate([out, A], axis=0)
+
+
+SIDE_REACH = 70         # px over which a side gradient is still trusted
+
+
+def extend_side(A, n, left):
+    if n <= 0:
+        return A
+    H, W, C = A.shape
+    win = 60
+    y = np.arange(win, dtype=np.float64)
+    ym = y.mean()
+    denom = ((y - ym) ** 2).sum()
+    out = np.zeros((H, n, C))
+    d = np.arange(1, n + 1, dtype=np.float64)
+    # follow the measured gradient near the edge, then level off: extrapolating a
+    # slope linearly across hundreds of px drifts the background off its own tone
+    reach = SIDE_REACH * (1.0 - np.exp(-d / SIDE_REACH))
+    xs = (-reach[::-1] if left else reach)[None, :]
+    for ch in range(C):
+        vals = (A[:, :win, ch] if left else A[:, W - win:, ch]).T
+        s = ((y - ym)[:, None] * (vals - vals.mean(axis=0))).sum(axis=0) / denom
+        s = np.clip(gauss1d(s, 40), -SLOPE_LIMIT, SLOPE_LIMIT)
+        edge = gauss1d((A[:, :3, ch] if left else A[:, W - 3:, ch]).mean(axis=1), 3)
+        out[:, :, ch] = edge[:, None] + s[:, None] * xs
+    return np.concatenate([out, A] if left else [A, out], axis=1)
+
+
+def subject_cols(A, depth):
+    blocked = np.where(depth < A.shape[0])[0]
+    return (int(blocked.min()), int(blocked.max())) if len(blocked) else (0, A.shape[1] - 1)
+
+
+def pad(A, depth, px, fit=True, ratio=None):
+    """Grow the frame by `px` at the top, then out to `ratio` (default: keep)."""
+    H, W, _ = A.shape
+    B = extend_top(A, px, depth)
+    if fit:
+        target = ratio if ratio else W / float(H)
+        side = int(round((H + px) * target)) - W
+        left = side // 2                          # keep the subject centred as shot
+        B = extend_side(extend_side(B, left, True), side - left, False)
+    return B
+
+
+def save(B, dst, size=None):
+    out = Image.fromarray(np.clip(np.rint(B), 0, 255).astype(np.uint8))
+    if size is not None:
+        out = out.resize(size, Image.LANCZOS)
+    if dst.lower().endswith(('.jpg', '.jpeg')):
+        out.save(dst, quality=98, subsampling=0)
+    else:
+        out.save(dst)
+    return out
+
+
+def process(src, dst, px=DEFAULT_PX, fit=True, exact=False, ratio=None):
+    im = Image.open(src).convert('RGB')
+    A = np.asarray(im).astype(np.float64)
+    H, W, _ = A.shape
+    depth = background_depth(A)
+    clear = int(depth.min())
+    if clear < 3:
+        # the subject grazes the border: there is no clean row above those
+        # columns, but anchors() already ignores everything near the subject,
+        # so the strip is still sampled from real background further out
+        print(f"  note: the subject touches the top edge over "
+              f"{int((depth < 3).sum())} columns, left as shot")
+        depth = np.maximum(depth, 1)
+
+    T = int(round(px * H / float(H - px))) if exact else px
+    B = pad(A, depth, T, fit, ratio)
+    out = save(B, dst, (W, H) if exact else None)
+
+    V = np.asarray(Image.open(dst).convert('RGB')).astype(np.float64)
+    print(f"{dst}: +{T}px strip, grain={bg_noise(A, depth):.2f}, {W}x{H} -> {out.size[0]}x{out.size[1]}"
+          f" | clearance {clear}px -> {int(background_depth(V).min())}px")
+
+
+if __name__ == '__main__':
+    argv = sys.argv[1:]
+    px, fit, exact, ratio, args = DEFAULT_PX, True, False, None, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--no-fit':
+            fit = False
+        elif a == '--exact':
+            exact = True
+        elif a.startswith('--ratio='):
+            ratio = float(a.split('=', 1)[1])
+        elif a == '--ratio':
+            i += 1
+            ratio = float(argv[i])
+        elif a.startswith('--px='):
+            px = int(a.split('=', 1)[1])
+        elif a == '--px':
+            i += 1
+            px = int(argv[i])
+        elif a.startswith('--'):
+            raise SystemExit(f'unknown flag {a}')
+        else:
+            args.append(a)
+        i += 1
+    if len(args) != 2:
+        raise SystemExit(__doc__)
+    process(args[0], args[1], px=px, fit=fit, exact=exact, ratio=ratio)

@@ -1,0 +1,6 @@
+# delivery archives — repackaged from photos/, not tracked
+*.zip
+
+# Python bytecode from the photo scripts
+__pycache__/
+*.pyc
